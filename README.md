@@ -1,45 +1,92 @@
-
-
-````markdown
 # Event Notification System (Python)
 
 ## 📌 Overview
-This project implements an **Event Notification System** using the **Python stack**.  
-It exposes a REST API to accept notification events and processes them **asynchronously**
-using **FIFO queues** and **background worker threads**.
+The **Event Notification System** is a backend service built using **Python and FastAPI** that accepts
+notification events via REST APIs and processes them **asynchronously** using
+**FIFO queues and worker threads**.
 
-The system supports the following notification types:
-- **EMAIL**
-- **SMS**
-- **PUSH**
-
-Each event type is processed independently while preserving **FIFO ordering per event type**.
-
----
-
-## 🎯 Key Features
-- REST API built with **FastAPI**
-- Asynchronous processing using **worker threads**
-- Separate FIFO queues per notification type
-- Event status tracking (`PENDING`, `COMPLETED`, `FAILED`)
-- Callback notification on completion or failure
+The system is designed to demonstrate:
+- Clean REST API design
+- Thread-safe concurrency
+- FIFO event processing
 - Graceful shutdown handling
-- Centralized logging with service-specific loggers
-- Fully dockerized (API exposed on **port 8080**)
-- Comprehensive automated test suite
+- Callback integration
+- Dockerized deployment
+- Comprehensive automated testing
 
 ---
 
-## 🧠 Architecture Summary
+## 🎯 Supported Event Types
 
-- **Single microservice**
-- **Single process**
-- **Multiple worker threads**
-- **In-memory FIFO queues**
-- **No persistent storage (by design)**
+| Event Type | Purpose | Processing Time |
+|-----------|--------|-----------------|
+| EMAIL | Send email notification | 5 seconds |
+| SMS | Send SMS notification | 3 seconds |
+| PUSH | Send push notification | 2 seconds |
 
-The architecture follows the **Producer–Consumer pattern** and is optimized for
-clarity, correctness, and testability.
+Each event type:
+- Has its **own FIFO queue**
+- Has its **own worker thread**
+- Is processed **independently and sequentially**
+
+---
+
+## 🏗️ System Architecture
+
+### High-Level Architecture Diagram
+
+```text
+                    ┌────────────────────────┐
+                    │        Client          │
+                    │  (REST API Consumer)   │
+                    └──────────┬─────────────┘
+                               │
+                               │ POST /api/events
+                               ▼
+                    ┌────────────────────────┐
+                    │        FastAPI         │
+                    │   (API Layer)          │
+                    │                        │
+                    │ - Input validation     │
+                    │ - Event creation       │
+                    │ - Status API           │
+                    └──────────┬─────────────┘
+                               │
+                               │ enqueue(event)
+                               ▼
+        ┌─────────────────────────────────────────────────┐
+        │             EventQueueManager                   │
+        │                                                 │
+        │   ┌────────────┐  ┌────────────┐  ┌──────────┐  │
+        │   │ EMAIL FIFO │  │ SMS FIFO   │  │ PUSH FIFO│  │
+        │   └────────────┘  └────────────┘  └──────────┘  │
+        └───────┬────────────────┬────────────────┬───────┘
+                │                │                │
+                ▼                ▼                ▼
+      ┌────────────────┐ ┌──────────────────┐ ┌────────────────────┐
+      │ EMAIL Worker   │ │ SMS Worker       │ │ PUSH Worker        │
+      │ (Thread)       │ │ (Thread)         │ │ (Thread)           │
+      │ FIFO processing│ │ FIFO processing  │ │ FIFO processing    │
+      │ 5s delay       │ │ 3s delay         │ │ 2s delay           │
+      └───────┬────────┘ └───────┬──────────┘ └───────┬────────────┘
+              │                  │                    │
+              ▼                  ▼                    ▼
+     ┌────────────────────────────────────────────────────┐
+     │             CallbackDispatcher                     │
+     │  - POST success / failure callbacks                │
+     └────────────────────────────────────────────────────┘
+````
+
+---
+
+## 🧠 Design Principles
+
+* Producer–Consumer pattern
+* Single process, multi-threaded
+* Thread-safe FIFO queues
+* Strict FIFO ordering per event type
+* No shared mutable state across workers
+* Graceful shutdown without data loss
 
 ---
 
@@ -48,19 +95,21 @@ clarity, correctness, and testability.
 ```text
 event-notification-system/
 ├── app/
-│   ├── main.py
-│   ├── config.py
+│   ├── main.py                 # FastAPI app + lifecycle
+│   ├── config.py               # Environment configuration
 │   ├── logging/
 │   │   └── logger.py
+|   ├── lifecycle/
+│   │   └── shutdown.py
 │   └── notification/
-│       ├── api.py
-│       ├── models.py
-│       ├── queues.py
-│       ├── workers.py
-│       ├── callbacks.py
+│       ├── api.py              # REST endpoints
+│       ├── models.py           # Domain models + validation
+│       ├── queues.py           # FIFO queues
+│       ├── workers.py          # Worker threads
+│       ├── callbacks.py        # Callback dispatcher
 │       ├── exceptions.py
 │       └── services/
-│           ├── processors.py
+│           ├── processors.py   # Event processors
 │           └── event_status_service.py
 ├── tests/
 │   └── notification/
@@ -69,27 +118,33 @@ event-notification-system/
 │       ├── test_queue_manager.py
 │       ├── test_workers.py
 │       ├── test_processors.py
+|       ├── test_shutdown_manager.py
+|       ├── conftest.py
 │       ├── test_callbacks.py
 │       └── test_event_status_service.py
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
+├── .env
+├── .dockerignore
 └── README.md
-````
+```
 
 ---
 
-## 🚀 API Usage
+## 🔗 API Routes (Explicit)
 
-### Create Event
+All APIs are **namespaced under `/api`**.
 
-**Endpoint**
+### ➕ Create Event
 
-```
+**Route**
+
+```http
 POST /api/events
 ```
 
-**Request Body**
+#### EMAIL Payload
 
 ```json
 {
@@ -97,6 +152,32 @@ POST /api/events
   "payload": {
     "recipient": "user@example.com",
     "message": "Welcome!"
+  },
+  "callbackUrl": "http://client-system.com/api/event-status"
+}
+```
+
+#### SMS Payload
+
+```json
+{
+  "eventType": "SMS",
+  "payload": {
+    "phoneNumber": "+911234567890",
+    "message": "Your OTP is 123456"
+  },
+  "callbackUrl": "http://client-system.com/api/event-status"
+}
+```
+
+#### PUSH Payload
+
+```json
+{
+  "eventType": "PUSH",
+  "payload": {
+    "deviceId": "abc-123-xyz",
+    "message": "Order shipped!"
   },
   "callbackUrl": "http://client-system.com/api/event-status"
 }
@@ -111,13 +192,128 @@ POST /api/events
 }
 ```
 
+Here is the corrected and properly formatted Markdown:
+
 ---
 
-### Get Event Status
+### ❌ Invalid Event Type
 
-**Endpoint**
+**Payload**
+
+```json
+{
+  "eventType": "FAX",
+  "payload": {},
+  "callbackUrl": "http://example.com"
+}
+```
+
+**Response — 422 Unprocessable Entity**
+
+```json
+{
+  "detail": [
+    {
+      "type": "enum",
+      "loc": ["body", "eventType"],
+      "msg": "Input should be 'EMAIL', 'SMS' or 'PUSH'"
+    }
+  ]
+}
+```
+
+
+
+Here is the corrected and properly formatted Markdown:
+
+---
+
+### ❌ Invalid Payload Data Types
+
+**Payload**
+
+```json
+{
+  "eventType": "PUSH",
+  "payload": {
+    "deviceId": ["not", "a", "string"],
+    "message": "Hello"
+  },
+  "callbackUrl": "http://example.com"
+}
 
 ```
+
+**Response — 422 Unprocessable Entity**
+
+```json
+{
+  "detail": "PUSH payload field 'deviceId' must be of type str, got list"
+}
+
+```
+
+### ❌ Invalid Payload Data Types
+
+**Payload**
+
+```json
+{
+  "eventType": "EMAIL",
+  "payload": {
+    "recipient": "user@example.com",
+    "message": "Hello"
+  },
+  "callbackUrl": "not-a-url"
+}
+
+
+```
+
+**Response — 422 Unprocessable Entity**
+
+```json
+{
+  "eventType": "EMAIL",
+  "payload": {
+    "recipient": "user@example.com",
+    "message": "Hello"
+  },
+  "callbackUrl": "not-a-url"
+}
+
+
+```
+
+**Payload**
+
+```json
+{
+  "eventType": "PUSH",
+  "payload": {
+    "deviceId": ["not", "a", "string"],
+    "message": "Hello"
+  },
+  "callbackUrl": "http://example.com"
+}
+
+```
+
+**Response — 422 Unprocessable Entity**
+
+```json
+{
+  "detail": "PUSH payload field 'deviceId' must be of type str, got list"
+}
+
+```
+---
+
+### 📊 Event Status API
+
+**Route**
+
+```http
 GET /api/events/{eventId}/status
 ```
 
@@ -130,66 +326,144 @@ GET /api/events/{eventId}/status
 }
 ```
 
-Possible statuses:
+Here is the properly formatted Markdown:
+
+---
+
+### ❌ Unknown Event ID
+
+**Request**
+
+```bash
+GET /api/events/unknown-id/status
+```
+
+**Response — 404 Not Found**
+
+```json
+{
+  "detail": "Event not found"
+}
+```
+
+
+Statuses:
 
 * `PENDING`
 * `COMPLETED`
 * `FAILED`
 
+
+| Scenario                | HTTP Status  | Behavior                |
+| ----------------------- | ------------ | ----------------------- |
+| Invalid request payload | 422          | Rejected before enqueue |
+| Unsupported event type  | 422          | Rejected                |
+| Invalid callback URL    | 422          | Rejected                |
+| Processing failure      | 202 → FAILED | Callback sent           |
+| Processing sucess       | 202 → success| Callback sent           |
+| Unknown event status    | 404          | Safe failure            |
+
 ---
 
-### Health Check
+### ❤️ Health Check
 
-**Endpoint**
+**Route**
 
-```
+```http
 GET /health
 ```
 
-**Response**
+---
 
-```json
-{
-  "status": "ok"
-}
+## 🌍 How to Run the Application
+📥 Clone the Repository
+
+```bash
+git clone <your-repository-url>
+cd event-notification-system
+```
+
+### 🧑‍💻 Run Locally (Without Docker)
+
+#### 1️⃣ Create virtual environment (recommended)
+
+```bash
+python -m venv venv
+source venv/bin/activate     # macOS/Linux
+venv\Scripts\activate        # Windows
+```
+
+#### 2️⃣ Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 3️⃣ Configure environment
+
+Edit `.env` if needed:
+
+```env
+APP_PORT=8000
+LOG_LEVEL=INFO
+FAILURE_RATE=0.1
+EMAIL_PROCESSING_TIME=5
+SMS_PROCESSING_TIME=3
+PUSH_PROCESSING_TIME=2
+```
+
+#### 4️⃣ Start server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+#### 5️⃣ API URLs (Local)
+
+```text
+POST http://127.0.0.1:8000/api/events
+GET  http://127.0.0.1:8000/api/events/{eventId}/status
+GET  http://127.0.0.1:8000/health
 ```
 
 ---
 
-## ⏱️ Processing Rules
+### 🐳 Run with Docker
 
-| Event Type | Simulated Processing Time |
-| ---------- | ------------------------- |
-| EMAIL      | 5 seconds                 |
-| SMS        | 3 seconds                 |
-| PUSH       | 2 seconds                 |
+#### 1️⃣ Build & start container
 
-* Events are processed **FIFO per event type**
-* Random failure simulation is applied
-* Callback is triggered on success or failure
+```bash
+docker compose up --build
+```
 
----
+#### 2️⃣ API URLs (Docker)
 
-## 🔔 Callback Payload
+```text
+POST http://localhost:8080/api/events
+GET  http://localhost:8080/api/events/{eventId}/status
+GET  http://localhost:8080/health
+```
 
-### Success
+## 🔔 Callback Payloads
+
+### ✅ Success
 
 ```json
 {
   "eventId": "e123",
-  "status": "COMPLETED",
   "eventType": "EMAIL",
+  "status": "COMPLETED",
   "processedAt": "2026-01-31T12:34:56Z"
 }
 ```
 
-### Failure
+### ❌ Failure
 
 ```json
 {
   "eventId": "e123",
-  "status": "FAILED",
   "eventType": "EMAIL",
+  "status": "FAILED",
   "errorMessage": "Simulated processing failure",
   "processedAt": "2026-01-31T12:34:56Z"
 }
@@ -199,36 +473,110 @@ GET /health
 
 ## 🛑 Graceful Shutdown
 
-On shutdown:
+On shutdown (`Ctrl+C` / `SIGTERM`):
 
-1. API stops accepting new events
-2. Workers stop polling after queues drain
-3. In-flight events finish processing
-4. Worker threads exit cleanly
+1. Shutdown signal is raised
+2. Workers stop polling for new events
+3. Existing queues are fully drained
+4. In-progress events finish processing
+5. Callbacks are sent
+6. Worker threads exit cleanly
 
 ---
 
+## ⚙️ Environment Configuration (.env)
 
-## 🐳 Running with Docker
+```env
+APP_PORT=8080
+LOG_LEVEL=INFO
 
-### Build and Run
+# Failure simulation
+FAILURE_RATE=0.1
 
-```bash
-docker compose up --build
+# Processing delays (seconds)
+EMAIL_PROCESSING_TIME=5
+SMS_PROCESSING_TIME=3
+PUSH_PROCESSING_TIME=2
 ```
 
-### API Available At
-
-```
-http://localhost:8080/api/events
-```
+All behavior is configurable via environment variables.
 
 ---
 
 ## 🧪 Testing
 
-Run all tests locally with:
+Run all tests:
 
 ```bash
 pytest -v
+```
+
+---
+
+## ✅ Testing Coverage Checklist
+
+### API Layer
+
+* ✔ Valid event submission
+* ✔ Invalid event type
+* ✔ Missing payload fields
+* ✔ Invalid payload types
+* ✔ Invalid callback URL
+* ✔ Status API correctness
+
+### Queue Handling
+
+* ✔ Correct queue assignment by event type
+* ✔ FIFO order preservation
+* ✔ Queue isolation
+
+### Event Processing
+
+* ✔ Correct processing delay per event type
+* ✔ Random failure simulation
+* ✔ Failure does not crash workers
+
+### Failure Handling
+
+* ✔ Event marked FAILED
+* ✔ Callback triggered on failure
+* ✔ Processing continues after failure
+
+### Graceful Shutdown
+
+* ✔ No new events accepted
+* ✔ In-flight events complete
+* ✔ Queues drained
+* ✔ Worker threads terminate cleanly
+
+---
+
+## 🧾 Evaluation Criteria Mapping
+
+| Skill Area        | Demonstrated By               |
+| ----------------- | ----------------------------- |
+| REST APIs         | FastAPI endpoints, validation |
+| Concurrency       | Thread-safe queues, workers   |
+| Async Processing  | FIFO worker threads           |
+| Callback Handling | Robust HTTP callbacks         |
+| Graceful Shutdown | ShutdownManager + lifecycle   |
+| Dockerization     | Dockerfile + Compose          |
+| Unit Testing      | Pytest coverage of core logic |
+
+---
+
+## 📌 Final Notes
+
+This project intentionally avoids:
+
+* External message brokers
+* Persistent storage
+* Unnecessary async complexity
+
+
+---
+
+👨‍💻 **Author:** Shivam
+📦 **Tech Stack:** Python, FastAPI, Pytest, Docker
+
 ```
