@@ -5,10 +5,7 @@ This module defines:
 - A common processing contract for all event types
 - Concrete processors for EMAIL, SMS, and PUSH events
 
-Processors encapsulate business behavior such as:
-- Simulated processing delay
-- Random failure handling
-- Logging of processing lifecycle
+Processing behavior is fully driven by environment configuration.
 """
 
 import time
@@ -18,18 +15,26 @@ from abc import ABC, abstractmethod
 
 from app.notification.models import Event
 from app.notification.exceptions import EventProcessingError
-from app.config import FAILURE_RATE
+from app.config import (
+    FAILURE_RATE,
+    EMAIL_PROCESSING_TIME,
+    SMS_PROCESSING_TIME,
+    PUSH_PROCESSING_TIME,
+)
 
 
+# -------------------------------------------------------------------
+# Base Processor
+# -------------------------------------------------------------------
 
 class EventProcessor(ABC):
     """
-    Abstract base class for event processors.
+    Abstract base class for all event processors.
 
-    Each processor implementation must:
-    - Handle exactly one event type
-    - Process events synchronously
-    - Raise EventProcessingError on failure
+    Responsibilities:
+    - Provide a common processing contract
+    - Simulate processing delay
+    - Simulate controlled failure
     """
 
     def __init__(self, processing_time_seconds: int, logger_name: str) -> None:
@@ -51,9 +56,12 @@ class EventProcessor(ABC):
 
     def _simulate_processing(self) -> None:
         """
-        Simulate processing delay and random failure.
+        Simulate processing delay and probabilistic failure.
         """
-        self._logger.info("Processing started")
+        self._logger.info(
+            f"Processing started (sleep={self._processing_time}s, failureRate={FAILURE_RATE})"
+        )
+
         time.sleep(self._processing_time)
 
         if random.random() < FAILURE_RATE:
@@ -62,15 +70,21 @@ class EventProcessor(ABC):
         self._logger.info("Processing completed successfully")
 
 
+# -------------------------------------------------------------------
+# EMAIL Processor
+# -------------------------------------------------------------------
 
 class EmailProcessor(EventProcessor):
     """
     Processor for EMAIL notification events.
+
+    Processing time is controlled via:
+    EMAIL_PROCESSING_TIME
     """
 
     def __init__(self) -> None:
         super().__init__(
-            processing_time_seconds=5,
+            processing_time_seconds=EMAIL_PROCESSING_TIME,
             logger_name="app.notification.processor.email",
         )
 
@@ -81,15 +95,21 @@ class EmailProcessor(EventProcessor):
         self._simulate_processing()
 
 
+# -------------------------------------------------------------------
+# SMS Processor
+# -------------------------------------------------------------------
 
 class SmsProcessor(EventProcessor):
     """
     Processor for SMS notification events.
+
+    Processing time is controlled via:
+    SMS_PROCESSING_TIME
     """
 
     def __init__(self) -> None:
         super().__init__(
-            processing_time_seconds=3,
+            processing_time_seconds=SMS_PROCESSING_TIME,
             logger_name="app.notification.processor.sms",
         )
 
@@ -100,15 +120,21 @@ class SmsProcessor(EventProcessor):
         self._simulate_processing()
 
 
+# -------------------------------------------------------------------
+# PUSH Processor
+# -------------------------------------------------------------------
 
 class PushProcessor(EventProcessor):
     """
     Processor for PUSH notification events.
+
+    Processing time is controlled via:
+    PUSH_PROCESSING_TIME
     """
 
     def __init__(self) -> None:
         super().__init__(
-            processing_time_seconds=2,
+            processing_time_seconds=PUSH_PROCESSING_TIME,
             logger_name="app.notification.processor.push",
         )
 

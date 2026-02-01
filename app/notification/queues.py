@@ -7,15 +7,13 @@ layer and background worker threads.
 """
 
 from queue import Queue, Empty
-from typing import Optional
-from typing import Dict
+from typing import Optional, Dict
 
 from app.notification.models import Event, EventType
 from app.notification.exceptions import (
     UnsupportedEventTypeError,
     QueueOperationError,
 )
-
 
 
 class EventQueueManager:
@@ -62,11 +60,10 @@ class EventQueueManager:
 
         try:
             queue.put(event)
-        except Exception as exc:  # extremely rare, but defensive
+        except Exception as exc:
             raise QueueOperationError(
                 f"Failed to enqueue event {event.event_id}"
             ) from exc
-
 
     def dequeue(
         self,
@@ -108,6 +105,29 @@ class EventQueueManager:
                 f"Failed to dequeue event for type {event_type}"
             ) from exc
 
+    def is_empty(self, event_type: EventType) -> bool:
+        """
+        Check whether the specified queue is empty.
+
+        This method is primarily used during graceful shutdown
+        to determine whether all queued events have been processed.
+
+        Args:
+            event_type (EventType): Queue to check
+
+        Returns:
+            bool: True if the queue is empty, False otherwise
+
+        Raises:
+            UnsupportedEventTypeError: If no queue exists for the event type
+        """
+        queue = self._queues.get(event_type)
+        if queue is None:
+            raise UnsupportedEventTypeError(
+                f"No queue configured for event type: {event_type}"
+            )
+
+        return queue.empty()
 
     def size(self, event_type: EventType) -> int:
         """

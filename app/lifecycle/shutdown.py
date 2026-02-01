@@ -1,8 +1,10 @@
 """
 Graceful shutdown coordination.
 
-This module provides utilities to signal worker threads
-to stop and optionally wait for them to exit cleanly.
+Ensures:
+- Workers receive shutdown signal
+- Queues are drained before exit
+- Threads exit cleanly
 """
 
 import threading
@@ -15,10 +17,6 @@ logger = logging.getLogger("app.lifecycle.shutdown")
 class ShutdownManager:
     """
     Coordinates graceful shutdown of background workers.
-
-    Responsibilities:
-    - Signal shutdown intent
-    - Wait for worker threads to exit
     """
 
     def __init__(self) -> None:
@@ -26,17 +24,15 @@ class ShutdownManager:
 
     @property
     def shutdown_event(self) -> threading.Event:
-        """
-        Expose the shutdown event to workers.
-        """
         return self._shutdown_event
 
     def initiate_shutdown(self) -> None:
         """
-        Signal all workers to begin shutdown.
+        Signal workers to stop after draining queues.
         """
-        logger.info("Shutdown initiated")
-        self._shutdown_event.set()
+        if not self._shutdown_event.is_set():
+            logger.info("Shutdown signal set")
+            self._shutdown_event.set()
 
     def wait_for_workers(
         self,
@@ -44,14 +40,10 @@ class ShutdownManager:
         timeout_seconds: float | None = None,
     ) -> None:
         """
-        Wait for worker threads to exit.
-
-        Args:
-            workers: Iterable of worker threads
-            timeout_seconds: Optional join timeout
+        Block until all workers exit.
         """
         for worker in workers:
-            logger.info(f"Waiting for {worker.name} to shut down")
+            logger.info("Waiting for %s to exit", worker.name)
             worker.join(timeout=timeout_seconds)
 
-        logger.info("All workers shut down")
+        logger.info("All workers shut down cleanly")

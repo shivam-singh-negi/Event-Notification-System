@@ -1,12 +1,12 @@
 """
 Worker threads for asynchronous event processing.
 
-This module defines long-running worker threads that:
+Responsibilities:
 - Consume events from FIFO queues
-- Delegate processing to event processors
+- Process events sequentially per event type
+- Drain all queued events during shutdown
 - Update event status
 - Send success / failure callbacks
-- Respect shutdown signals
 """
 
 import threading
@@ -25,17 +25,10 @@ from app.notification.services.event_status_service import EventStatusService
 from app.notification.exceptions import EventProcessingError
 from app.notification.callbacks import CallbackDispatcher
 
-
 class EventWorker(threading.Thread):
     """
     Background worker thread responsible for processing
     events of a single EventType.
-
-    Each worker:
-    - Polls its queue using a timeout
-    - Processes events sequentially (FIFO)
-    - Updates event status
-    - Never crashes on empty queues
     """
 
     def __init__(
@@ -47,7 +40,10 @@ class EventWorker(threading.Thread):
         callback_dispatcher: CallbackDispatcher,
         shutdown_event: threading.Event,
     ) -> None:
-        super().__init__(name=f"{event_type.value}-Worker", daemon=True)
+        super().__init__(
+            name=f"{event_type.value}-Worker",
+            daemon=False,  # MUST be non-daemon for graceful shutdown
+        )
 
         self._event_type = event_type
         self._queue_manager = queue_manager
@@ -62,23 +58,36 @@ class EventWorker(threading.Thread):
 
     def run(self) -> None:
         """
-        Main worker loop.
+        Worker loop.
 
-        Polls the queue until shutdown is requested.
-        Handles empty queues gracefully.
+        Exit condition:
+        - Shutdown requested
+        - AND queue is fully drained
         """
-        self._logger.info("Worker started")
+        self._logger.info(
+            "Worker started (eventType=%s)",
+            self._event_type.value,
+        )
 
-        while not self._shutdown_event.is_set():
+        while True:
+            if (
+                self._shutdown_event.is_set()
+                and self._queue_manager.is_empty(self._event_type)
+            ):
+                break
+
             try:
-                event = self._queue_manager.dequeue(self._event_type)
+                event = self._queue_manager.dequeue(
+                    self._event_type,
+                    timeout=1.0,
+                )
 
-                # Queue empty → retry after timeout
                 if event is None:
                     continue
 
                 self._logger.info(
-                    f"Dequeued event {event.event_id} for processing"
+                    "Dequeued event_id=%s",
+                    event.event_id,
                 )
 
                 self._processor.process(event)
@@ -86,35 +95,52 @@ class EventWorker(threading.Thread):
                 self._status_service.mark_completed(event.event_id)
                 self._callback_dispatcher.notify_success(event)
 
+                self._logger.info(
+                    "Event processed successfully event_id=%s",
+                    event.event_id,
+                )
+
             except EventProcessingError as exc:
                 self._logger.error(
-                    f"Event {event.event_id} failed during processing: {exc}"
+                    "Processing failed event_id=%s error=%s",
+                    event.event_id,
+                    exc,
                 )
 
                 self._status_service.mark_failed(event.event_id)
                 self._callback_dispatcher.notify_failure(
-                    event, str(exc)
+                    event,
+                    str(exc),
                 )
 
-            except Exception as exc:
-                # Defensive: worker must never die
+            except Exception:
                 self._logger.exception(
-                    f"Unexpected worker error: {exc}"
+                    "Unexpected worker error; continuing execution"
                 )
 
-        self._logger.info("Worker shutting down")
+        self._logger.info(
+            "Worker shutdown complete (eventType=%s)",
+            self._event_type.value,
+        )
 
 
-# ✅ FACTORY FUNCTION — MUST BE MODULE LEVEL
+# ------------------------------------------------------------------
+# Worker factory
+# ------------------------------------------------------------------
+
 def create_workers(
     queue_manager: EventQueueManager,
     status_service: EventStatusService,
     shutdown_event: threading.Event,
 ) -> Dict[EventType, EventWorker]:
     """
-    Create and configure one worker per event type.
+    Create one worker per event type.
     """
     callback_dispatcher = CallbackDispatcher()
+
+    logging.getLogger("app.notification.worker").info(
+        "Initializing worker threads"
+    )
 
     return {
         EventType.EMAIL: EventWorker(
