@@ -1,106 +1,100 @@
-import time
+from fastapi.testclient import TestClient
 
 
-def test_event_status_initially_pending(client):
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+
+def create_email_event(client: TestClient) -> str:
     response = client.post(
         "/api/events",
         json={
             "eventType": "EMAIL",
             "payload": {
                 "recipient": "test@example.com",
-                "message": "Hello"
+                "message": "Hello",
             },
-            "callbackUrl": "http://example.com/callback"
+            "callbackUrl": "http://example.com/callback",
         },
     )
+    assert response.status_code == 202
+    return response.json()["eventId"]
 
-    event_id = response.json()["eventId"]
 
-    status_resp = client.get(f"/api/events/{event_id}/status")
+# -------------------------------------------------------------------
+# Core status behavior
+# -------------------------------------------------------------------
 
-    assert status_resp.status_code == 200
-    assert status_resp.json()["status"] == "PENDING"
+def test_event_status_initially_pending(client: TestClient):
+    """
+    Newly created events must start in PENDING state.
+    """
+    event_id = create_email_event(client)
 
-def test_event_status_unknown_event_returns_404(client):
-    response = client.get("/api/events/unknown-event-id/status")
+    response = client.get(f"/api/events/{event_id}/status")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "PENDING"
+
+
+def test_event_status_unknown_event_returns_404(client: TestClient):
+    """
+    Querying an unknown event should return 404.
+    """
+    response = client.get("/api/events/non-existent-id/status")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Event not found"
 
 
-def test_event_status_is_idempotent(client):
-    response = client.post(
-        "/api/events",
-        json={
-            "eventType": "EMAIL",
-            "payload": {
-                "recipient": "test@example.com",
-                "message": "Hello"
-            },
-            "callbackUrl": "http://example.com/callback"
-        },
-    )
-
-    event_id = response.json()["eventId"]
+def test_event_status_endpoint_is_idempotent(client: TestClient):
+    """
+    Multiple reads of the status endpoint should be safe and consistent.
+    """
+    event_id = create_email_event(client)
 
     for _ in range(3):
-        status_resp = client.get(f"/api/events/{event_id}/status")
-        assert status_resp.status_code == 200
-        assert status_resp.json()["status"] == "PENDING"
+        response = client.get(f"/api/events/{event_id}/status")
+        assert response.status_code == 200
+        assert response.json()["status"] == "PENDING"
 
-def test_event_status_response_schema(client):
-    response = client.post(
-        "/api/events",
-        json={
-            "eventType": "EMAIL",
-            "payload": {
-                "recipient": "test@example.com",
-                "message": "Hello"
-            },
-            "callbackUrl": "http://example.com/callback"
-        },
-    )
 
-    event_id = response.json()["eventId"]
+# -------------------------------------------------------------------
+# API contract validation
+# -------------------------------------------------------------------
 
-    status_resp = client.get(f"/api/events/{event_id}/status")
-    body = status_resp.json()
+def test_event_status_response_schema(client: TestClient):
+    """
+    Status response must follow the defined API contract.
+    """
+    event_id = create_email_event(client)
+
+    response = client.get(f"/api/events/{event_id}/status")
+    body = response.json()
 
     assert set(body.keys()) == {"eventId", "status"}
     assert body["eventId"] == event_id
+    assert body["status"] == "PENDING"
 
-def test_multiple_events_have_independent_status(client):
-    r1 = client.post(
-        "/api/events",
-        json={
-            "eventType": "EMAIL",
-            "payload": {
-                "recipient": "a@example.com",
-                "message": "Hello"
-            },
-            "callbackUrl": "http://example.com/callback"
-        },
-    )
 
-    r2 = client.post(
-        "/api/events",
-        json={
-            "eventType": "EMAIL",
-            "payload": {
-                "recipient": "b@example.com",
-                "message": "Hello"
-            },
-            "callbackUrl": "http://example.com/callback"
-        },
-    )
+def test_multiple_events_have_independent_status(client: TestClient):
+    """
+    Each event must maintain its own independent lifecycle state.
+    """
+    event_id_1 = create_email_event(client)
+    event_id_2 = create_email_event(client)
 
-    id1 = r1.json()["eventId"]
-    id2 = r2.json()["eventId"]
+    status_1 = client.get(f"/api/events/{event_id_1}/status").json()["status"]
+    status_2 = client.get(f"/api/events/{event_id_2}/status").json()["status"]
 
-    assert client.get(f"/api/events/{id1}/status").json()["status"] == "PENDING"
-    assert client.get(f"/api/events/{id2}/status").json()["status"] == "PENDING"
+    assert status_1 == "PENDING"
+    assert status_2 == "PENDING"
 
-def test_event_status_invalid_id_format(client):
+
+def test_event_status_invalid_identifier_returns_404(client: TestClient):
+    """
+    Invalid path parameters should not crash the API.
+    """
     response = client.get("/api/events/!!!/status")
 
     assert response.status_code == 404
