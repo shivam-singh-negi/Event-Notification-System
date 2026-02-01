@@ -1,28 +1,43 @@
 FROM python:3.12-slim
 
-# Runtime safety
+# -------------------------------------------------
+# Runtime safety & Python behavior
+# -------------------------------------------------
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# App runs on port 8080 as required
+# Application port (requirement)
 ENV APP_PORT=8080
 
 WORKDIR /app
 
-# Minimal system deps
+# -------------------------------------------------
+# Install system dependencies (minimal)
+# -------------------------------------------------
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
+# -------------------------------------------------
+# Install Python dependencies
+# -------------------------------------------------
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# -------------------------------------------------
 # Copy application code
+# -------------------------------------------------
 COPY app ./app
+COPY .env .env
 
-# Expose required port
+# -------------------------------------------------
+# Expose API port
+# -------------------------------------------------
 EXPOSE 8080
 
-# Start FastAPI
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+# -------------------------------------------------
+# IMPORTANT:
+# - exec-form CMD (signal-safe)
+# - single worker (in-memory queues!)
+# -------------------------------------------------
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -1,8 +1,13 @@
-version: "3.9"
-
 services:
   api:
     build: .
     container_name: event-notification-system
     ports:
       - "8080:8080"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+    # Graceful shutdown support
+    stop_signal: SIGTERM
+    stop_grace_period: 120s
