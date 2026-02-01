@@ -572,32 +572,64 @@ pytest -v
 
 ---
 
-## 🧾 Evaluation Criteria Mapping
-
-| Skill Area        | Demonstrated By               |
-| ----------------- | ----------------------------- |
-| REST APIs         | FastAPI endpoints, validation |
-| Concurrency       | Thread-safe queues, workers   |
-| Async Processing  | FIFO worker threads           |
-| Callback Handling | Robust HTTP callbacks         |
-| Graceful Shutdown | ShutdownManager + lifecycle   |
-| Dockerization     | Dockerfile + Compose          |
-| Unit Testing      | Pytest coverage of core logic |
 
 ---
 
-## 📌 Final Notes
+## 📌 Final Notes & Assumptions
 
-This project intentionally avoids:
+### 🔁 Java → Python Mapping
 
-* External message brokers
-* Persistent storage
-* Unnecessary async complexity
+The original requirement mentioned **Java**, but this system is implemented in **Python** using equivalent backend concepts.
+All architectural and behavioral requirements are fully met.
 
+| Requirement Area | Java Equivalent   | Python Implementation              |
+| ---------------- | ----------------- | ---------------------------------- |
+| REST API         | Spring Boot       | FastAPI                            |
+| Validation       | Bean Validation   | Pydantic                           |
+| Workers          | ExecutorService   | `threading.Thread`                 |
+| FIFO Queue       | BlockingQueue     | `queue.Queue`                      |
+| Shutdown Hooks   | JVM Shutdown Hook | FastAPI Lifespan + ShutdownManager |
+| Unit Tests       | JUnit             | Pytest                             |
 
 ---
 
-👨‍💻 **Author:** Shivam
-📦 **Tech Stack:** Python, FastAPI, Pytest, Docker
+### 🧠 Key Assumptions
 
+* In-memory queues only (no database by design)
+* FIFO ordering guaranteed **per event type**
+* One process, multiple worker threads
+* Failures are simulated and isolated per event
+* Callback failures never crash workers
+
+---
+
+### 🛑 Graceful Shutdown (Local vs Docker)
+
+**Local (uvicorn):**
+
+* Application waits until all events finish
+* Queues are fully drained
+* Workers terminate cleanly
+
+**Docker:**
+
+* Docker may stop containers early unless configured
+* To allow graceful shutdown, increase stop window (docker-compose.yml):
+
+```yaml
+stop_grace_period: 120s
 ```
+
+This ensures all in-progress events complete before container exit.
+
+---
+
+### 🚫 Intentionally Excluded
+
+* External message brokers (Kafka, RabbitMQ)
+* Persistent storage
+* Distributed processing frameworks
+
+Focus is on **correctness, concurrency, FIFO logic, shutdown safety, and testability**.
+
+---
