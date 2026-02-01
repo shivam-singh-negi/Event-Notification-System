@@ -3,11 +3,11 @@ Core domain models for the Event Notification System.
 
 This module defines:
 - Supported notification event types
-- Strictly validated API request schema
+- Strict API request validation schemas
 - Internal event domain representation
 
-These models form the contract between the API layer and
-the asynchronous processing pipeline.
+These models form the contract between the API layer
+and the asynchronous processing pipeline.
 """
 
 from enum import Enum
@@ -20,14 +20,13 @@ from pydantic import BaseModel, Field, HttpUrl, model_validator
 from app.notification.exceptions import InvalidEventPayloadError
 
 
+# -------------------------------------------------------------------
+# Event Type
+# -------------------------------------------------------------------
+
 class EventType(str, Enum):
     """
     Supported notification event types.
-
-    This enum:
-    - Restricts the system to known event categories
-    - Eliminates magic strings
-    - Enables automatic request validation
     """
 
     EMAIL = "EMAIL"
@@ -35,9 +34,40 @@ class EventType(str, Enum):
     PUSH = "PUSH"
 
     def __str__(self) -> str:
-        """Return the raw string value of the enum."""
         return self.value
 
+
+# -------------------------------------------------------------------
+# Strict payload schemas (SPEC ENFORCED)
+# -------------------------------------------------------------------
+
+class EmailPayload(BaseModel):
+    recipient: str
+    message: str
+
+    class Config:
+        extra = "forbid"
+
+
+class SmsPayload(BaseModel):
+    phoneNumber: str
+    message: str
+
+    class Config:
+        extra = "forbid"
+
+
+class PushPayload(BaseModel):
+    deviceId: str
+    message: str
+
+    class Config:
+        extra = "forbid"
+
+
+# -------------------------------------------------------------------
+# API Request Model
+# -------------------------------------------------------------------
 
 class CreateEventRequest(BaseModel):
     """
@@ -45,11 +75,8 @@ class CreateEventRequest(BaseModel):
 
     Responsibilities:
     - Validate request structure
-    - Enforce event-type-specific payload requirements
-    - Reject invalid input early at the API boundary
-
-    All validation errors raised by this model are
-    treated as client errors (HTTP 400).
+    - Enforce event-type-specific payload schema
+    - Reject invalid or non-spec-compliant input early
     """
 
     eventType: EventType = Field(..., description="Notification event type")
@@ -59,55 +86,79 @@ class CreateEventRequest(BaseModel):
     @model_validator(mode="after")
     def validate_payload_by_event_type(self):
         """
-        Validate payload contents based on event type.
-
-        Ensures that all required fields for the given
-        event type are present before the request is accepted.
-
-        Raises:
-            InvalidEventPayloadError: If validation fails
+        Enforce strict payload schema per event type with
+        clear, human-readable validation errors including data types.
         """
-        payload = self.payload
-        event_type = self.eventType
+        payload = self.payload or {}
 
-        if not payload:
-            raise InvalidEventPayloadError("Payload must not be empty")
+        if self.eventType == EventType.EMAIL:
+            schema = {
+                "recipient": str,
+                "message": str,
+            }
+            event_name = "EMAIL"
 
-        if event_type == EventType.EMAIL:
-            required_fields = {"recipient", "message"}
-        elif event_type == EventType.SMS:
-            required_fields = {"phoneNumber", "message"}
-        elif event_type == EventType.PUSH:
-            required_fields = {"deviceId", "message"}
+        elif self.eventType == EventType.SMS:
+            schema = {
+                "phoneNumber": str,
+                "message": str,
+            }
+            event_name = "SMS"
+
+        elif self.eventType == EventType.PUSH:
+            schema = {
+                "deviceId": str,
+                "message": str,
+            }
+            event_name = "PUSH"
+
         else:
             raise InvalidEventPayloadError(
-                f"Unsupported event type: {event_type}"
+                f"Unsupported event type: {self.eventType}"
             )
 
-        missing_fields = required_fields - payload.keys()
-        if missing_fields:
+        required_fields = set(schema.keys())
+        provided_fields = set(payload.keys())
+
+        # ---- Missing fields ----
+        missing = required_fields - provided_fields
+        if missing:
             raise InvalidEventPayloadError(
-                f"Missing required payload fields: {', '.join(missing_fields)}"
+                f"{event_name} payload is missing required field(s): "
+                f"{', '.join(sorted(missing))}"
             )
+
+        # ---- Extra fields ----
+        extra = provided_fields - required_fields
+        if extra:
+            raise InvalidEventPayloadError(
+                f"{event_name} payload contains unsupported field(s): "
+                f"{', '.join(sorted(extra))}. "
+                f"Allowed fields are: {', '.join(sorted(required_fields))}"
+            )
+
+        # ---- Type validation ----
+        for field, expected_type in schema.items():
+            value = payload[field]
+            if not isinstance(value, expected_type):
+                raise InvalidEventPayloadError(
+                    f"{event_name} payload field '{field}' must be of type "
+                    f"{expected_type.__name__}, got {type(value).__name__}"
+                )
 
         return self
 
-    def __repr__(self) -> str:
-        """Compact representation for debugging and logs."""
-        return (
-            f"CreateEventRequest(eventType={self.eventType}, "
-            f"callbackUrl={self.callbackUrl})"
-        )
 
-
+# -------------------------------------------------------------------
+# Internal Domain Event
+# -------------------------------------------------------------------
 
 class Event(BaseModel):
     """
     Internal representation of an accepted notification event.
 
-    An Event instance represents a validated request that has been
-    assigned a unique identifier and is ready for asynchronous
-    processing by worker threads.
+    Represents a validated request that is ready for
+    asynchronous processing.
     """
 
     event_id: str
@@ -124,12 +175,7 @@ class Event(BaseModel):
         callback_url: HttpUrl,
     ) -> "Event":
         """
-        Create a new Event with a generated ID and timestamp.
-
-        This factory method guarantees:
-        - Unique event identity
-        - Consistent initialization
-        - Immutable creation metadata
+        Factory method to create a new Event.
         """
         return cls(
             event_id=str(uuid4()),
@@ -140,7 +186,6 @@ class Event(BaseModel):
         )
 
     def __repr__(self) -> str:
-        """Concise, log-friendly representation."""
         return (
             f"Event(event_id={self.event_id}, "
             f"event_type={self.event_type}, "
@@ -148,12 +193,6 @@ class Event(BaseModel):
         )
 
     def __eq__(self, other: object) -> bool:
-        """
-        Compare events by identifier.
-
-        Two events are considered equal if they share the same event_id.
-        """
         if not isinstance(other, Event):
             return False
         return self.event_id == other.event_id
-
