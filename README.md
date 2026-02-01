@@ -194,6 +194,8 @@ POST /api/events
 
 ---
 
+---
+
 ### ❌ Invalid Event Type
 
 **Payload**
@@ -213,12 +215,22 @@ POST /api/events
   "detail": [
     {
       "type": "enum",
-      "loc": ["body", "eventType"],
-      "msg": "Input should be 'EMAIL', 'SMS' or 'PUSH'"
+      "loc": [
+        "body",
+        "eventType"
+      ],
+      "msg": "Input should be 'EMAIL', 'SMS' or 'PUSH'",
+      "input": "FAX",
+      "ctx": {
+        "expected": "'EMAIL', 'SMS' or 'PUSH'"
+      }
     }
   ]
 }
 ```
+
+
+---
 
 ---
 
@@ -235,19 +247,42 @@ POST /api/events
   },
   "callbackUrl": "http://example.com"
 }
-
 ```
 
 **Response — 422 Unprocessable Entity**
 
 ```json
 {
-  "detail": "PUSH payload field 'deviceId' must be of type str, got list"
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": [
+        "body"
+      ],
+      "msg": "Value error, PUSH payload field 'deviceId' must be of type str, got list",
+      "input": {
+        "eventType": "PUSH",
+        "payload": {
+          "deviceId": [
+            "not",
+            "a",
+            "string"
+          ],
+          "message": "Hello"
+        },
+        "callbackUrl": "http://example.com"
+      },
+      "ctx": {
+        "error": {}
+      }
+    }
+  ]
 }
-
 ```
 
-### ❌ Invalid Payload Data Types
+---
+
+### ❌ Invalid Callback URL
 
 **Payload**
 
@@ -260,47 +295,29 @@ POST /api/events
   },
   "callbackUrl": "not-a-url"
 }
-
-
 ```
 
 **Response — 422 Unprocessable Entity**
 
 ```json
 {
-  "eventType": "EMAIL",
-  "payload": {
-    "recipient": "user@example.com",
-    "message": "Hello"
-  },
-  "callbackUrl": "not-a-url"
+  "detail": [
+    {
+      "type": "url_parsing",
+      "loc": [
+        "body",
+        "callbackUrl"
+      ],
+      "msg": "Input should be a valid URL, relative URL without a base",
+      "input": "not-a-url",
+      "ctx": {
+        "error": "relative URL without a base"
+      }
+    }
+  ]
 }
-
-
 ```
 
-**Payload**
-
-```json
-{
-  "eventType": "PUSH",
-  "payload": {
-    "deviceId": ["not", "a", "string"],
-    "message": "Hello"
-  },
-  "callbackUrl": "http://example.com"
-}
-
-```
-
-**Response — 422 Unprocessable Entity**
-
-```json
-{
-  "detail": "PUSH payload field 'deviceId' must be of type str, got list"
-}
-
-```
 ---
 
 ### 📊 Event Status API
