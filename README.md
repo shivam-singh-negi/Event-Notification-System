@@ -192,8 +192,6 @@ POST /api/events
 }
 ```
 
-Here is the corrected and properly formatted Markdown:
-
 ---
 
 ### ❌ Invalid Event Type
@@ -221,10 +219,6 @@ Here is the corrected and properly formatted Markdown:
   ]
 }
 ```
-
-
-
-Here is the corrected and properly formatted Markdown:
 
 ---
 
@@ -325,9 +319,6 @@ GET /api/events/{eventId}/status
   "status": "PENDING"
 }
 ```
-
-Here is the properly formatted Markdown:
-
 ---
 
 ### ❌ Unknown Event ID
@@ -432,8 +423,12 @@ GET  http://127.0.0.1:8000/health
 
 #### 1️⃣ Build & start container
 
+Note: Ensure that docker is runner in the system if not then start docker service.
+
 ```bash
 docker compose up --build
+OR
+docker compose up
 ```
 
 #### 2️⃣ API URLs (Docker)
@@ -484,6 +479,31 @@ On shutdown (`Ctrl+C` / `SIGTERM`):
 
 ---
 
+### 🛑 Graceful Shutdown: Local vs Docker
+
+* **Local (uvicorn)**
+  The application shuts down **only after all in-progress events finish processing** and queues are drained.
+
+* **Docker**
+  Docker shuts down the container after a **grace period**.
+  If events are still being processed when this window expires, Docker will force stop the container.
+
+  You can **increase the shutdown window** in `docker-compose.yml`:
+
+```yaml
+services:
+  api:
+    stop_grace_period: 120s
+```
+
+Increasing this value allows the system to **finish processing more events before shutdown**.
+
+✔ No events are lost locally
+✔ Docker shutdown behavior is configurable via `stop_grace_period`
+
+---
+
+
 ## ⚙️ Environment Configuration (.env)
 
 ```env
@@ -491,7 +511,7 @@ APP_PORT=8080
 LOG_LEVEL=INFO
 
 # Failure simulation
-FAILURE_RATE=0.1
+FAILURE_RATE=0.1  # Value varies between 0.0 to 1.0. To simulate 100% failure set the value to 1.0.
 
 # Processing delays (seconds)
 EMAIL_PROCESSING_TIME=5
@@ -548,6 +568,7 @@ pytest -v
 * ✔ In-flight events complete
 * ✔ Queues drained
 * ✔ Worker threads terminate cleanly
+
 
 ---
 
